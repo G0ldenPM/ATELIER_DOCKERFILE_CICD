@@ -56,9 +56,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: Tests
     steps:
-      - name: A compléter
+      - name: Récupérer le code du dépôt
+        uses: actions/checkout@v4
+
+      - name: Construire l'image
         run: |
-          echo "Écrire ici la construction de l'image Docker"
+          docker build -t $IMAGE_NAME:${{ github.sha }} .
+
+      - name: Exporter l'image dans un fichier
+        run: |
+          docker save $IMAGE_NAME:${{ github.sha }} -o image.tar
+
+      - name: Transmettre l'image au job Production
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-docker
+          path: image.tar
 
   # ---------------------------------------------------------------
   # JOB 3 - Déploiement continu : simulation de mise en production
@@ -78,6 +91,34 @@ jobs:
     needs: Docker
     environment: production
     steps:
-      - name: A compléter
+      - name: Récupérer l'image du job Docker
+        uses: actions/download-artifact@v4
+        with:
+          name: image-docker
+
+      - name: Charger l'image dans Docker
         run: |
-          echo "Écrire ici la simulation de mise en production"
+          docker load -i image.tar
+
+      - name: Démarrer le conteneur
+        run: |
+          docker run -d -p 4000:4000 --name app $IMAGE_NAME:${{ github.sha }}
+
+      - name: Vérifier que l'application répond
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sf http://localhost:4000/; then
+              echo "L'application répond !"
+              exit 0
+            fi
+            echo "Pas encore prête, nouvel essai dans 2 secondes..."
+            sleep 2
+          done
+          echo "L'application ne répond pas"
+          docker logs app
+          exit 1
+
+      - name: Annoncer la mise en production
+        run: |
+          echo "## 🚀 Mise en production réussie" >> $GITHUB_STEP_SUMMARY
+          echo "Image déployée : \`$IMAGE_NAME:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
